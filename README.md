@@ -1,3 +1,3 @@
-# hn_gql
+# HackerNews GraphQL
 
 
