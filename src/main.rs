@@ -1,13 +1,28 @@
 use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};
-use async_graphql::{EmptyMutation, EmptySubscription, Object, Schema};
+use async_graphql::{
+    dataloader::DataLoader, Context, EmptyMutation, EmptySubscription, Object, Schema,
+};
 use async_graphql_warp::{BadRequest, Response};
+use futures::future::join_all;
 use http::StatusCode;
 use std::convert::Infallible;
 use warp::{http::Response as HttpResponse, Filter, Rejection};
 
+mod client;
+mod result;
+mod types;
+use client::{HnClient, ItemLoader};
+use result::Result;
+use types::*;
+
 #[tokio::main]
 async fn main() {
-    let schema = Schema::build(Query, EmptyMutation, EmptySubscription).finish();
+    let client = HnClient::init().unwrap();
+
+    let schema = Schema::build(Query, EmptyMutation, EmptySubscription)
+        .data(client.clone())
+        .data(DataLoader::new(ItemLoader { client }))
+        .finish();
 
     println!("Playground: http://localhost:8000");
 
@@ -47,8 +62,23 @@ struct Query;
 
 #[Object]
 impl Query {
-    /// Returns the sum of a and b
-    async fn add(&self, a: i32, b: i32) -> i32 {
-        a + b
+    async fn top(&self, ctx: &Context<'_>, limit: Option<usize>) -> Result<Vec<Item>> {
+        let client = ctx.data_unchecked::<HnClient>();
+        let limit = limit.unwrap_or(10);
+        let ids = client
+            .get_top_stories()
+            .await?
+            .into_iter()
+            .take(limit)
+            .collect::<Vec<_>>();
+
+        Ok(ctx
+            .data_unchecked::<DataLoader<ItemLoader>>()
+            .load_many(ids)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(_, v)| v)
+            .collect())
     }
 }
